@@ -4,11 +4,11 @@ A lightweight library for creating confetti effects on Roblox UI. Designed to be
 
 ## Installation
 
-Install via [Wally] = "sqzee1/confetti@1.0.1"
+Install via [Wally] = "sqzee1/confetti@1.0.2"
 
 ```toml
 [dependencies]
-Confetti = "sqzee1/confetti@1.0.0"
+Confetti = "sqzee1/confetti@1.0.2"
 ```
 
 Install via [Roblox Studio] = https://create.roblox.com/store/asset/87040144615726/Confetti

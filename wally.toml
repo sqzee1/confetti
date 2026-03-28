@@ -1,7 +1,7 @@
 [package]
 name = "sqzee1/confetti"
 license = "MIT"
-version = "1.0.1"
+version = "1.0.2"
 description = "Lightweight UI confetti and particle effects library for Roblox, featuring ready-made presets and a customizable emitter with simple one-line usage, performance-friendly pooling, and full effect control."
 registry = "https://github.com/UpliftGames/wally-index"
 repository = "https://github.com/sqzee1/confetti"
