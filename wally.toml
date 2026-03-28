@@ -1,0 +1,16 @@
+[package]
+name = "sqzee1/my-library"
+license = "MIT"
+version = "1.0.0"
+registry = "https://github.com/UpliftGames/wally-index"
+realm = "shared"
+authors = ["sqzee1"]
+
+include = [
+	"src/**",
+	"init.luau",
+	"README.md",
+	"LICENSE"
+]
+
+[dependencies]
