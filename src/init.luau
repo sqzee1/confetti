@@ -24,13 +24,20 @@
 			Blur = 20,            -- applies a BlurEffect to Lighting during the effect (size, <= 0 disables)
 			CameraShake = true,   -- quick camera zoom-in at the start
 			Container = frame,    -- confetti is spawned inside the given GuiObject
-			Clip = true,          -- ClipsDescendants on the container + destroys particles on bounds exit (default: true)
+			Clip = true,          -- clamps particles inside container bounds (default: true)
 			Shape = "Square",     -- "Square" | "Circle" | "Rectangle" | "Random"
 			Colors = { Color3 },  -- color palette
+			Image = { "rbxassetid://111", "rbxassetid://222" },  -- list of asset ids; picked randomly per particle
+			EmitTime = 3,         -- overrides the preset's emit duration (seconds)
 		})
 
 		when Clip = false, particles can visually escape the container
 		and are destroyed when they leave the screen bounds instead.
+
+		IMAGE NOTES:
+			When Image is set, each particle becomes an ImageLabel instead of a colored Frame.
+			- No Colors provided  → ImageColor3 = white  (image renders with its original colors)
+			- Colors provided     → ImageColor3 is picked from the palette (tints the image)
 
 	CUSTOM EFFECT:
 		Confetti.create(gui, {
@@ -39,7 +46,7 @@
 			Colors = { Color3.fromRGB(255, 0, 0) },      -- color palette
 			Size = NumberRange.new(6, 14),               -- particle size range (px)
 			Gravity = 600,                               -- downward acceleration (px/s²)
-			Drag = 0.01,                                 -- velocity damping per frame [0..1]
+			Drag = 0.01,                                 -- velocity damping coefficient (frame-rate independent)
 			Rotation = true,                             -- whether particles spin
 			Shape = "Random",                            -- "Square" | "Circle" | "Rectangle" | "Random"
 			SpawnRate = 40,                              -- particles per second (0 = instant burst)
@@ -67,6 +74,7 @@
 
 -- [ SERVICES ] --
 
+local Lighting = game:GetService("Lighting")
 local RunService = game:GetService("RunService")
 local TweenService = game:GetService("TweenService")
 
@@ -111,6 +119,8 @@ export type Options = {
 	Shape: Shape?,
 	Colors: { Color3 }?,
 	Size: NumberRange?,
+	Image: { string }?,
+	EmitTime: number?,
 }
 
 -- [ CONSTANTS ] --
@@ -287,6 +297,7 @@ local PARADE_PRESET: Config = {
 
 local _stack: { Frame } = {}
 local _depth = 0
+local _activeCount = 0
 
 local function poolGet(): Frame?
 	if _depth > 0 then
@@ -305,6 +316,53 @@ local function poolPush(frame: Frame)
 	end
 	_depth += 1
 	_stack[_depth] = frame
+end
+
+-- [ BLUR ] --
+
+local _confettiBlur: BlurEffect = Instance.new("BlurEffect")
+_confettiBlur.Size = 0
+_confettiBlur.Parent = Lighting
+
+local _confettiBlurRefCount = 0
+local _confettiBlurTarget = 0
+local _confettiBlurTween: Tween? = nil
+
+local function blurAcquire(size: number)
+	if size <= 0 then
+		return
+	end
+
+	_confettiBlurRefCount += 1
+	_confettiBlurTarget = math.max(_confettiBlurTarget, math.clamp(size, 0, BLUR_MAX_SIZE))
+
+	if _confettiBlurTween then
+		_confettiBlurTween:Cancel()
+	end
+
+	local t = TweenService:Create(_confettiBlur, TweenInfo.new(BLUR_FADE_IN), { Size = _confettiBlurTarget })
+	_confettiBlurTween = t
+	t:Play()
+end
+
+local function blurRelease()
+	if _confettiBlurRefCount <= 0 then
+		return
+	end
+
+	_confettiBlurRefCount -= 1
+
+	if _confettiBlurRefCount == 0 then
+		_confettiBlurTarget = 0
+
+		if _confettiBlurTween then
+			_confettiBlurTween:Cancel()
+			_confettiBlurTween = nil
+		end
+
+		local t = TweenService:Create(_confettiBlur, TweenInfo.new(BLUR_FADE_OUT), { Size = 0 })
+		t:Play()
+	end
 end
 
 -- [ UTILS ] --
@@ -332,37 +390,88 @@ local function resolveShape(shape: Shape?): Shape
 	return shape
 end
 
-local function resetFrame(frame: Frame, parent: GuiObject | ScreenGui, shape: Shape, size: number, color: Color3)
+local function resetFrame(
+	frame: Frame,
+	parent: GuiObject | ScreenGui,
+	shape: Shape,
+	size: number,
+	color: Color3,
+	imageId: string?
+)
 	frame:ClearAllChildren()
 
 	local w = size
 	local h = if shape == "Rectangle" then math.ceil(size / 2) else size
 
 	frame.Size = UDim2.fromOffset(w, h)
-	frame.BackgroundColor3 = color
-	frame.BackgroundTransparency = 0
 	frame.BorderSizePixel = 0
 	frame.Rotation = 0
 	frame.ZIndex = 10
 	frame.ClipsDescendants = false
 	frame.Parent = parent
 
-	if shape == "Circle" then
-		local corner = Instance.new("UICorner")
-		corner.CornerRadius = UDim.new(0.5, 0)
-		corner.Parent = frame
+	if imageId then
+		frame.BackgroundTransparency = 1
+
+		local img = Instance.new("ImageLabel")
+		img.Size = UDim2.fromScale(1, 1)
+		img.BackgroundTransparency = 1
+		img.Image = imageId
+		img.ImageColor3 = color
+		img.Parent = frame
+	else
+		frame.BackgroundColor3 = color
+		frame.BackgroundTransparency = 0
+
+		if shape == "Circle" then
+			local corner = Instance.new("UICorner")
+			corner.CornerRadius = UDim.new(0.5, 0)
+			corner.Parent = frame
+		end
 	end
 end
 
-local function acquireFrame(parent: GuiObject | ScreenGui, shape: Shape, size: number, color: Color3): Frame
+local function acquireFrame(
+	parent: GuiObject | ScreenGui,
+	shape: Shape,
+	size: number,
+	color: Color3,
+	imageId: string?
+): Frame
 	local frame: Frame = poolGet() or Instance.new("Frame")
-	resetFrame(frame, parent, shape, size, color)
+	resetFrame(frame, parent, shape, size, color, imageId)
 	return frame
 end
 
 local function releaseFrame(frame: Frame)
 	frame.Parent = nil
 	poolPush(frame)
+	_activeCount = math.max(0, _activeCount - 1)
+end
+
+local function applyShake(active: boolean)
+	if not active then
+		return
+	end
+
+	local camera = workspace.CurrentCamera :: Camera
+	local originalFov = camera.FieldOfView
+
+	local t1 = TweenService:Create(
+		camera,
+		TweenInfo.new(SHAKE_PUNCH_IN, Enum.EasingStyle.Quad, Enum.EasingDirection.Out),
+		{ FieldOfView = originalFov + SHAKE_FOV_PUNCH }
+	)
+	local t2 = TweenService:Create(
+		camera,
+		TweenInfo.new(SHAKE_PUNCH_OUT, Enum.EasingStyle.Sine, Enum.EasingDirection.Out),
+		{ FieldOfView = originalFov }
+	)
+
+	t1:Play()
+	t1.Completed:Connect(function()
+		t2:Play()
+	end)
 end
 
 local function getInitialState(preset: string, screenSize: Vector2, origin: UDim2?)
@@ -435,44 +544,6 @@ local function getInitialState(preset: string, screenSize: Vector2, origin: UDim
 	return x :: number, y :: number, vx :: number, vy :: number
 end
 
-local function applyBlur(size: number?): BlurEffect?
-	if not size or size <= 0 then
-		return nil
-	end
-
-	local blur = Instance.new("BlurEffect")
-	blur.Size = 0
-	blur.Parent = game:GetService("Lighting")
-	TweenService:Create(blur, TweenInfo.new(BLUR_FADE_IN), { Size = math.clamp(size, 0, BLUR_MAX_SIZE) }):Play()
-
-	return blur
-end
-
-local function applyShake(active: boolean)
-	if not active then
-		return
-	end
-
-	local camera = workspace.CurrentCamera :: Camera
-	local originalFov = camera.FieldOfView
-
-	local t1 = TweenService:Create(
-		camera,
-		TweenInfo.new(SHAKE_PUNCH_IN, Enum.EasingStyle.Quad, Enum.EasingDirection.Out),
-		{ FieldOfView = originalFov + SHAKE_FOV_PUNCH }
-	)
-	local t2 = TweenService:Create(
-		camera,
-		TweenInfo.new(SHAKE_PUNCH_OUT, Enum.EasingStyle.Sine, Enum.EasingDirection.Out),
-		{ FieldOfView = originalFov }
-	)
-
-	t1:Play()
-	t1.Completed:Connect(function()
-		t2:Play()
-	end)
-end
-
 -- [ EMITTER ] --
 
 type EmitConfig = {
@@ -496,12 +567,8 @@ local function emit(cfg: EmitConfig): Handle
 	local screenSize = getScreenSize(container)
 	local parent: GuiObject | ScreenGui = container or cfg.gui
 
-	if container and clip then
-		container.ClipsDescendants = true
-	end
-
-	local count = config.Count or 100
-	local emitTime = config.EmitTime or 3
+	local emitTime = options.EmitTime or config.EmitTime or 3
+	local count = if options.EmitTime then math.huge else (config.Count or 100)
 	local colors = options.Colors or config.Colors or DEFAULT_COLORS
 	local sizeRange = options.Size or config.Size or NumberRange.new(8, 16)
 	local lifetimeRange = config.Lifetime or DEFAULT_LIFETIME
@@ -512,19 +579,34 @@ local function emit(cfg: EmitConfig): Handle
 	local isBurst = spawnRate == 0
 	local interval = if isBurst then 0 else 1 / spawnRate
 
-	local blur = applyBlur(options.Blur)
+	local imageList: { string }? = options.Image
+	local hasColors: boolean = options.Colors ~= nil
+
+	local hasBlur = options.Blur ~= nil and (options.Blur :: number) > 0
+	if hasBlur then
+		blurAcquire(options.Blur :: number)
+	end
 	applyShake(options.CameraShake == true)
 
 	local particles: { Particle } = {}
 	local connection: RBXScriptConnection
 
 	local function spawnParticle()
+		if _activeCount >= POOL_MAX_SIZE then
+			return
+		end
+
 		local shape = resolveShape(options.Shape or config.Shape)
 		local size = math.random(sizeRange.Min, sizeRange.Max)
-		local color = randomFrom(colors)
-		local frame = acquireFrame(parent, shape, size, color)
+
+		local imageId: string? = if imageList then randomFrom(imageList) else nil
+		local color: Color3 = if imageId and not hasColors then Color3.new(1, 1, 1) else randomFrom(colors)
+
+		local frame = acquireFrame(parent, shape, size, color, imageId)
 		local x, y, vx, vy = getInitialState(cfg.preset, screenSize, cfg.origin)
 		frame.Position = UDim2.fromOffset(x, y)
+
+		_activeCount += 1
 
 		table.insert(particles, {
 			frame = frame,
@@ -548,24 +630,13 @@ local function emit(cfg: EmitConfig): Handle
 			connection:Disconnect()
 		end
 
-		if container and clip then
-			container.ClipsDescendants = false
-		end
-
 		for _, p in particles do
 			releaseFrame(p.frame)
 		end
 		table.clear(particles)
 
-		if blur then
-			local blurRef = blur
-			blur = nil
-			TweenService:Create(blurRef, TweenInfo.new(BLUR_FADE_OUT), { Size = 0 }):Play()
-			task.delay(BLUR_FADE_OUT, function()
-				if blurRef and blurRef.Parent then
-					blurRef:Destroy()
-				end
-			end)
+		if hasBlur then
+			blurRelease()
 		end
 
 		if coroutine.status(thread) == "suspended" then
@@ -602,14 +673,16 @@ local function emit(cfg: EmitConfig): Handle
 				end
 			end
 
+			local decay = math.exp(-drag * dt)
+
 			local i = #particles
 			while i > 0 do
 				local p = particles[i]
 
 				p.lifetime -= dt
 				p.vy += gravity * dt
-				p.vx = p.vx * (1 - drag)
-				p.vy = p.vy * (1 - drag)
+				p.vx *= decay
+				p.vy *= decay
 				p.x += p.vx * dt
 				p.y += p.vy * dt
 
@@ -648,12 +721,12 @@ local function emit(cfg: EmitConfig): Handle
 
 		local startTime = os.clock()
 		repeat
-			task.wait()
+			RunService.Heartbeat:Wait()
 		until cancelled or (os.clock() - startTime >= emitTime)
 
 		if not cancelled then
 			repeat
-				task.wait()
+				RunService.Heartbeat:Wait()
 			until cancelled or #particles == 0
 		end
 
