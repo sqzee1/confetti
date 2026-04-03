@@ -70,17 +70,25 @@ All functions accept an optional `Options` table as their last parameter:
 
 ```luau
 Confetti.explosion(gui, {
-    Blur = 20,           -- applies a BlurEffect to Lighting during the effect (size, <= 0 disables)
-    CameraShake = true,  -- quick punch zoom at the start
-    Container = frame,   -- confetti is spawned inside the given GuiObject
-    Clip = true,         -- clips particles to the container bounds (default: true)
-    Shape = "Square",    -- "Square" | "Circle" | "Rectangle" | "Random"
-    Colors = { Color3 }, -- custom color palette
+    Blur = 20,            -- applies a BlurEffect to Lighting during the effect (size, <= 0 disables)
+    CameraShake = true,   -- quick punch zoom at the start
+    Container = frame,    -- confetti is spawned inside the given GuiObject
+    Clip = true,          -- clips particles to the container bounds (default: true)
+    Shape = "Square",     -- "Square" | "Circle" | "Rectangle" | "Random"
+    Colors = { Color3 },  -- custom color palette
     Size = NumberRange.new(6, 14), -- particle size range (px)
+    Image = { "rbxassetid://111", "rbxassetid://222" }, -- list of asset ids; picked randomly per particle
+    EmitTime = 3,         -- overrides the preset's emit duration (seconds)
 })
 ```
 
 When `Clip = false`, particles can visually escape the container and are destroyed when they leave the screen bounds instead.
+
+### Image Notes
+
+When `Image` is set, each particle becomes an `ImageLabel` instead of a colored `Frame`:
+- **No `Colors` provided** → `ImageColor3 = white` (image renders with its original colors)
+- **`Colors` provided** → `ImageColor3` is picked from the palette (tints the image)
 
 ---
 
@@ -93,7 +101,7 @@ Confetti.create(gui, {
     Colors = { Color3.fromRGB(255, 0, 0) }, -- color palette
     Size = NumberRange.new(6, 14),          -- particle size range (px)
     Gravity = 600,                          -- downward acceleration (px/s²)
-    Drag = 0.01,                            -- velocity damping per frame [0..1]
+    Drag = 0.01,                            -- velocity damping coefficient (frame-rate independent)
     Rotation = true,                        -- whether particles spin
     Shape = "Random",                       -- "Square" | "Circle" | "Rectangle" | "Random"
     SpawnRate = 40,                         -- particles per second (0 = instant burst)
